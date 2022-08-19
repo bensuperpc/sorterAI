@@ -126,26 +126,52 @@ class AI:
             loss=self._loss,
             metrics=self._metrics)
 
-    def load_model(self):
-        self._model = keras.models.load_model(self._model_path)
-        logger.debug(f"Model {self._model_path} loaded")
+    def load_model(self, model_path=None):
+        # Load model
+        if model_path is not None:
+            self._model = keras.models.load_model(model_path)
+            logger.debug(f"Model {model_path} loaded")
+        elif model_path is None and self._model is not None:
+            logger.debug("Model is already loaded")
+        else:
+            logger.warning("Model is None, load default model")
+            self._model = self.get_model()
 
-    def save_model(self):
-        self._model.save(self._model_path, save_format='h5')
-        logger.debug(f"Model saved to {self._model_path}")
+            self._model.pop()
+            self._model.add(layers.Dense(len(self._class_names)))
+            #self._model.build((None, self._img_height, self._img_width, 3))
+            # self._model.summary()
 
-    def prepare_train(self):
+    def save_model(self, model_path=None):
+        if model_path is not None:
+            self._model.save(model_path, save_format='h5')
+            logger.debug(f"Model saved to {model_path}")
+        else:
+            logger.warning(
+                "Model path is None, model saved to default path: model.h5")
+            self._model.save("model.h5", save_format='h5')
+            logger.debug("Model saved to: model.h5")
+
+    def load_data(self, data_dir=None):
+        if data_dir is not None:
+            self._data_dir = data_dir
+
+        if not isinstance(self._data_dir, pathlib.PurePath):
+            self._data_dir = pathlib.Path(self._data_dir)
+
         logger.debug(f"Data loaded from {self._data_dir}")
 
+        self._data_dir = pathlib.Path(self._data_dir)
+        self._list_ds = tf.data.Dataset.list_files(str(self._data_dir / '*/*'))
         self._class_names = np.array(sorted(
             [item.name for item in self._data_dir.glob('*') if item.name != "LICENSE.txt"]))
-
-        logger.debug(f"Class names: {self._class_names}")
+        logger.info(f"Class names: {self._class_names}")
         logger.debug(f"Number of classes: {len(self._class_names)}")
 
         logger.debug(
             f"Number of images: {len(list(self._data_dir.glob('*/*.jpg')))}")
 
+    def prepare_train(self):
         self._list_ds = tf.data.Dataset.list_files(str(self._data_dir/'*/*'))
         self._labeled_ds = self._list_ds.map(
             self.process_path, num_parallel_calls=self._AUTOTUNE)
@@ -170,36 +196,35 @@ class AI:
         self._val_ds = self.configure_for_performance(self._val_ds)
         self._test_ds = self.configure_for_performance(self._test_ds)
 
-        # Load model
-        if self._model is None:
-            logger.warning("Model is None, load default model")
-            self._model = self.get_model()
-
-            self._model.pop()
-            self._model.add(layers.Dense(len(self._class_names)))
-            #self._model.build((None, self._img_height, self._img_width, 3))
-            # self._model.summary()
-
     def train(self):
         logger.debug("Start training")
         logger.debug(f"Epochs: {self._epochs}")
         logger.debug(f"Batch size: {self._batch_size}")
 
-        log_dir = "./logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        logger.debug(f"Log dir: {log_dir}")
+        if self._tensorboard is True:
+            logger.debug("Tensorboard is enabled")
+            log_dir = "./logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            logger.debug(f"Log dir: {log_dir}")
 
-        # Create folder for tensorboard if not exist
-        Path(log_dir).mkdir(parents=True, exist_ok=True)
-        tb_callback = [tf.keras.callbacks.TensorBoard(
-            log_dir, histogram_freq=1, write_graph=True, write_images=True, update_freq=1)]
-
-        self._history = self._model.fit(
-            self._train_ds,
-            epochs=self._epochs,
-            validation_data=self._val_ds,
-            # callbacks=tb_callback,
-            verbose=1
-        )
+            # Create folder for tensorboard if not exist
+            Path(log_dir).mkdir(parents=True, exist_ok=True)
+            tb_callback = [tf.keras.callbacks.TensorBoard(
+                log_dir, histogram_freq=1, write_graph=True, write_images=True, update_freq=1)]
+            self._history = self._model.fit(
+                self._train_ds,
+                epochs=self._epochs,
+                validation_data=self._val_ds,
+                callbacks=tb_callback,
+                verbose=1
+            )
+        else:
+            logger.debug("Tensorboard is disabled")
+            self._history = self._model.fit(
+                self._train_ds,
+                epochs=self._epochs,
+                validation_data=self._val_ds,
+                verbose=1
+            )
 
     def evaluate(self):
         logger.debug("Start evaluation")
@@ -348,12 +373,11 @@ class AI:
         self._model = None
         # tf.keras.optimizers.Adam(learning_rate=1e-4)
         self._optimizer = "adam"
-        self._model_path = "model.h5"
 
         self._loss = tf.losses.SparseCategoricalCrossentropy(from_logits=True)
         self._metrics = ["accuracy"]
 
-        self.tensorboard_callback = None
+        self._tensorboard = None
 
     @property
     def data_augmentation(self):
@@ -402,18 +426,6 @@ class AI:
     @name.deleter
     def data_dir(self):
         del self._data_dir
-
-    @property
-    def model_path(self):
-        return self._model_path
-
-    @model_path.setter
-    def model_path(self, val):
-        self._model_path = val
-
-    @model_path.deleter
-    def model_path(self):
-        del self._model_path
 
     @property
     def optimizer(self):
@@ -523,16 +535,50 @@ class AI:
     def model(self):
         del self._model
 
+    @property
+    def tensorboard(self):
+        return self._tensorboard
+
+    @tensorboard.setter
+    def tensorboard(self, val):
+        self._tensorboard = val
+
+    @tensorboard.deleter
+    def tensorboard(self):
+        del self._tensorboard
+
+    @property
+    def history(self):
+        return self._history
+
+    @history.setter
+    def history(self, val):
+        self._history = val
+
+    @history.deleter
+    def history(self):
+        del self._history
+
 
 if __name__ == '__main__':
 
     parser = ArgumentParser()
     parser.add_argument("--display", action=argparse.BooleanOptionalAction,
                         default=True, help="Display the result")
+
     parser.add_argument("--data_augmentation", action=argparse.BooleanOptionalAction,
                         default=True, help="Use data augmentation")
     parser.add_argument("--gpu", action=argparse.BooleanOptionalAction,
-                        default=True, help="Use data augmentation")
+                        default=True, help="Use GPU")
+
+    parser.add_argument("--tensorboard", action=argparse.BooleanOptionalAction,
+                        default=False, help="Enable tensorboard")
+
+    parser.add_argument("--load", type=str,
+                        default=None, help="Load a model")
+    parser.add_argument("--save", type=str,
+                        default=None, help="Save a model")
+
     parser.add_argument("--epochs", type=int, default=10,
                         help="Number of epochs")
     parser.add_argument("--batch_size", type=int,
@@ -540,7 +586,7 @@ if __name__ == '__main__':
     parser.add_argument("--data_dir", type=str,
                         default=None, help="Data directory")
     parser.add_argument("--model_path", type=str,
-                        default="model.h5", help="Model path")
+                        default=None, help="Model path")
     #parser.add_argument("--optimizer", type=str, default="adam", help="Optimizer")
 
     parser.add_argument("--train_pourcent", type=float,
@@ -602,6 +648,9 @@ if __name__ == '__main__':
     #logger.debug(f"metrics: {args.metrics}")
     #ai.metrics = args.metrics
 
+    logger.debug(f"tensorboard: {args.tensorboard}")
+    ai.tensorboard = args.tensorboard
+
     # Enable GPU
     if args.gpu:
         logger.debug("Enable GPU")
@@ -616,10 +665,20 @@ if __name__ == '__main__':
         ai.data_dir = pathlib.Path(tf.keras.utils.get_file(
             'flower_photos', origin=data_dir, untar=True))
 
+    ai.load_data()
     ai.prepare_train()
+
+    if args.load is not None:
+        ai.load_model(args.load)
+    else:
+        ai.load_model()
+
     ai.compile()
     ai.train()
     ai.evaluate()
+
+    if args.save is not None:
+        ai.save_model()
 
     if args.display:
         ai.display_predict()
