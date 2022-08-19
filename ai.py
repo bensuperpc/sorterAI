@@ -1,18 +1,26 @@
 #!/usr/bin/env python
 
+import argparse
 from argparse import ArgumentParser
 
-import matplotlib.pyplot as plt
-import numpy as np
 import os
 import PIL
 import pathlib
+import datetime
+import sys
+from pathlib import Path
+
+import matplotlib
+import matplotlib.pyplot as plt
+
+import numpy as np
 
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.models import Sequential
 
+import loguru
 from loguru import logger
 import cv2 as cv
 
@@ -70,13 +78,18 @@ class AI:
             logger.debug("Using data augmentation")
             data_augmentation = tf.keras.Sequential([
                 layers.RandomFlip("horizontal_and_vertical"),
-                layers.RandomRotation(0.2),
+                # layers.RandomRotation(0.2),
                 # layers.RandomZoom(0.1),
-                layers.RandomContrast(0.1),
-                layers.RandomBrightness(0.1),
+                # layers.RandomContrast(0.1),
+                # layers.RandomBrightness(0.1),
             ])
-            ds = ds.map(lambda x, y: (data_augmentation(x, training=True), y),
-                        num_parallel_calls=self._AUTOTUNE)
+            #logger.debug(f"Without augmentation: {len(ds)}")
+            ds_aug = ds.map(lambda x, y: (data_augmentation(x, training=True), y),
+                            num_parallel_calls=self._AUTOTUNE)
+            ds = ds.concatenate(ds_aug)
+            #logger.debug(f"With augmentation: {len(ds)}")
+            #logger.debug(f"Type of ds: {type(ds)}")
+            #logger.debug("Data augmentation done")
 
         ds = ds.prefetch(buffer_size=self._AUTOTUNE)
         return ds
@@ -102,7 +115,7 @@ class AI:
             layers.Dense(len(self._class_names))
         ])
 
-        #model.build((None, self._img_height, self._img_width, 3))
+        # model.build((None, self._img_height, self._img_width, 3))
         # model.summary()
 
         return model
@@ -110,8 +123,8 @@ class AI:
     def compile(self):
         self._model.compile(
             optimizer=self._optimizer,
-            loss=tf.losses.SparseCategoricalCrossentropy(from_logits=True),
-            metrics=['accuracy'])
+            loss=self._loss,
+            metrics=self._metrics)
 
     def load_model(self):
         self._model = keras.models.load_model(self._model_path)
@@ -170,10 +183,22 @@ class AI:
     def train(self):
         logger.debug("Start training")
         logger.debug(f"Epochs: {self._epochs}")
+        logger.debug(f"Batch size: {self._batch_size}")
+
+        log_dir = "./logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        logger.debug(f"Log dir: {log_dir}")
+
+        # Create folder for tensorboard if not exist
+        Path(log_dir).mkdir(parents=True, exist_ok=True)
+        tb_callback = [tf.keras.callbacks.TensorBoard(
+            log_dir, histogram_freq=1, write_graph=True, write_images=True, update_freq=1)]
+
         self._history = self._model.fit(
             self._train_ds,
+            epochs=self._epochs,
             validation_data=self._val_ds,
-            epochs=self._epochs
+            # callbacks=tb_callback,
+            verbose=1
         )
 
     def evaluate(self):
@@ -287,20 +312,27 @@ class AI:
 
     # Defining __init__ method
     def __init__(self):
-        self.__name = "Not Set"
-        logger.debug(f"TF version: {tf.__version__}")
+        logger.info(f"Python version: {sys.version}")
+        logger.info(f"TF version: {tf.__version__}")
+        logger.info(f"Keras version: {tf.keras.__version__}")
+        logger.info(f"OpenCV version: {cv.__version__}")
+        logger.info(f"Numpy version: {np.__version__}")
+        logger.info(f"Matplotlib version: {matplotlib.__version__}")
+        logger.info(f"Loguru version: {loguru.__version__}")
+
+        self.__version__ = "0.0.1"
 
         self._batch_size = 24
         self._img_height = 256
         self._img_width = 256
-        self._epochs = 10
+        self._epochs = 8
 
         self._AUTOTUNE = tf.data.AUTOTUNE
 
         self._class_names = []
 
         self._data_dir = None
-        self._data_augmentation = False
+        self._data_augmentation = True
 
         self._list_ds = None
         self._train_ds = None
@@ -318,17 +350,22 @@ class AI:
         self._optimizer = "adam"
         self._model_path = "model.h5"
 
+        self._loss = tf.losses.SparseCategoricalCrossentropy(from_logits=True)
+        self._metrics = ["accuracy"]
+
+        self.tensorboard_callback = None
+
     @property
-    def data_dir(self):
-        return self._data_dir
+    def data_augmentation(self):
+        return self._data_augmentation
 
-    @data_dir.setter
-    def name(self, val):
-        self._data_dir = val
+    @data_augmentation.setter
+    def data_augmentation(self, val):
+        self._data_augmentation = val
 
-    @name.deleter
-    def data_dir(self):
-        del self._data_dir
+    @data_augmentation.deleter
+    def data_augmentation(self):
+        del self._data_augmentation
 
     @property
     def epochs(self):
@@ -344,7 +381,7 @@ class AI:
 
     @property
     def batch_size(self):
-        return self.__batch_size
+        return self._batch_size
 
     @batch_size.setter
     def batch_size(self, val):
@@ -354,35 +391,236 @@ class AI:
     def batch_size(self):
         del self._batch_size
 
+    @property
+    def data_dir(self):
+        return self._data_dir
+
+    @data_dir.setter
+    def name(self, val):
+        self._data_dir = val
+
+    @name.deleter
+    def data_dir(self):
+        del self._data_dir
+
+    @property
+    def model_path(self):
+        return self._model_path
+
+    @model_path.setter
+    def model_path(self, val):
+        self._model_path = val
+
+    @model_path.deleter
+    def model_path(self):
+        del self._model_path
+
+    @property
+    def optimizer(self):
+        return self._optimizer
+
+    @optimizer.setter
+    def optimizer(self, val):
+        self._optimizer = val
+
+    @optimizer.deleter
+    def optimizer(self):
+        del self._optimizer
+
+    @property
+    def train_pourcent(self):
+        return self._train_pourcent
+
+    @train_pourcent.setter
+    def train_pourcent(self, val):
+        self._train_pourcent = val
+
+    @train_pourcent.deleter
+    def train_pourcent(self):
+        del self._train_pourcent
+
+    @property
+    def val_pourcent(self):
+        return self._val_pourcent
+
+    @val_pourcent.setter
+    def val_pourcent(self, val):
+        self._val_pourcent = val
+
+    @val_pourcent.deleter
+    def val_pourcent(self):
+        del self._val_pourcent
+
+    @property
+    def test_pourcent(self):
+        return self._test_pourcent
+
+    @test_pourcent.setter
+    def test_pourcent(self, val):
+        self._test_pourcent = val
+
+    @test_pourcent.deleter
+    def test_pourcent(self):
+        del self._test_pourcent
+
+    @property
+    def img_height(self):
+        return self._img_height
+
+    @img_height.setter
+    def img_height(self, val):
+        self._img_height = val
+
+    @img_height.deleter
+    def img_height(self):
+        del self._img_height
+
+    @property
+    def img_width(self):
+        return self._img_width
+
+    @img_width.setter
+    def img_width(self, val):
+        self._img_width = val
+
+    @img_width.deleter
+    def img_width(self):
+        del self._img_width
+
+    @property
+    def loss(self):
+        return self._loss
+
+    @loss.setter
+    def loss(self, val):
+        self._loss = val
+
+    @loss.deleter
+    def loss(self):
+        del self._loss
+
+    @property
+    def metrics(self):
+        return self._metrics
+
+    @metrics.setter
+    def metrics(self, val):
+        self._metrics = val
+
+    @metrics.deleter
+    def metrics(self):
+        del self._metrics
+
+    @property
+    def model(self):
+        return self._model
+
+    @model.setter
+    def model(self, val):
+        self._model = val
+
+    @model.deleter
+    def model(self):
+        del self._model
+
 
 if __name__ == '__main__':
 
     parser = ArgumentParser()
-    parser.add_argument('-t', '--test', action='store_false')
+    parser.add_argument("--display", action=argparse.BooleanOptionalAction,
+                        default=True, help="Display the result")
+    parser.add_argument("--data_augmentation", action=argparse.BooleanOptionalAction,
+                        default=True, help="Use data augmentation")
+    parser.add_argument("--gpu", action=argparse.BooleanOptionalAction,
+                        default=True, help="Use data augmentation")
+    parser.add_argument("--epochs", type=int, default=10,
+                        help="Number of epochs")
+    parser.add_argument("--batch_size", type=int,
+                        default=24, help="Batch size")
+    parser.add_argument("--data_dir", type=str,
+                        default=None, help="Data directory")
+    parser.add_argument("--model_path", type=str,
+                        default="model.h5", help="Model path")
+    #parser.add_argument("--optimizer", type=str, default="adam", help="Optimizer")
+
+    parser.add_argument("--train_pourcent", type=float,
+                        default=0.8, help="Train pourcent")
+    parser.add_argument("--val_pourcent", type=float,
+                        default=0.1, help="Validation pourcent")
+    parser.add_argument("--test_pourcent", type=float,
+                        default=0.1, help="Test pourcent")
+
+    parser.add_argument("--img_height", type=int,
+                        default=256, help="Image height")
+    parser.add_argument("--img_width", type=int,
+                        default=256, help="Image width")
+
+    #parser.add_argument("--loss", type=str, default="categorical_crossentropy", help="Loss")
+    #parser.add_argument("--metrics", type=str, default="accuracy", help="Metrics")
+
     args = parser.parse_args()
 
     # Init AI
     ai = AI()
 
+    logger.debug(f"data_augmentation: {args.data_augmentation}")
+    ai.data_augmentation = args.data_augmentation
+
+    logger.debug(f"epochs: {args.epochs}")
+    ai.epochs = args.epochs
+
+    logger.debug(f"batch_size: {args.batch_size}")
+    ai.batch_size = args.batch_size
+
+    logger.debug(f"data_dir: {args.data_dir}")
+    ai.data_dir = args.data_dir
+
+    logger.debug(f"model_path: {args.model_path}")
+    ai.model_path = args.model_path
+
+    #logger.debug(f"optimizer: {args.optimizer}")
+    #ai.optimizer = args.optimizer
+
+    logger.debug(f"train_pourcent: {args.train_pourcent}")
+    ai.train_pourcent = args.train_pourcent
+
+    logger.debug(f"val_pourcent: {args.val_pourcent}")
+    ai.val_pourcent = args.val_pourcent
+
+    logger.debug(f"test_pourcent: {args.test_pourcent}")
+    ai.test_pourcent = args.test_pourcent
+
+    logger.debug(f"img_height: {args.img_height}")
+    ai.img_height = args.img_height
+
+    logger.debug(f"img_width: {args.img_width}")
+    ai.img_width = args.img_width
+
+    #logger.debug(f"loss: {args.loss}")
+    #ai.loss = args.loss
+
+    #logger.debug(f"metrics: {args.metrics}")
+    #ai.metrics = args.metrics
+
     # Enable GPU
-    ai.gpu()
+    if args.gpu:
+        logger.debug("Enable GPU")
+        ai.gpu()
 
-    data_dir = "https://storage.googleapis.com/download.tensorflow.org/example_images/flower_photos.tgz"
+    if ai.data_dir is None:
+        logger.warning("No data directory specified")
+        logger.warning("Chose default dataset")
+        data_dir = "https://storage.googleapis.com/download.tensorflow.org/example_images/flower_photos.tgz"
+        logger.warning(f"Download dataset from {data_dir}")
 
-    ai.data_dir = pathlib.Path(tf.keras.utils.get_file(
-        'flower_photos', origin=data_dir, untar=True))
-
-    logger.debug(f"Data dir: {ai.data_dir}")
+        ai.data_dir = pathlib.Path(tf.keras.utils.get_file(
+            'flower_photos', origin=data_dir, untar=True))
 
     ai.prepare_train()
     ai.compile()
-
-    ai.epochs = 9
-
     ai.train()
-
     ai.evaluate()
 
-    if args.test:
+    if args.display:
         ai.display_predict()
         ai.display_history()
